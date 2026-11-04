@@ -35,7 +35,8 @@ void hw_log(const char *fmt, ...)
     hal_uart_puts("\r\n", portMAX_DELAY);
     hal_gpio_toggle(BSP_LED_PORT, BSP_LED_PIN);
 
-    if (!hw_oled_ok) return;
+    if (!hw_oled_ok && !(ssd1306_init && ssd1306_init() == HAL_OK)) return;   /* OLED rớt thì thử khởi tạo lại */
+    hw_oled_ok = true;
     memmove(s_lines[0], s_lines[1], sizeof s_lines - sizeof s_lines[0]);
     strncpy(s_lines[LINES - 1], buf, COLS);          /* cắt còn 21 ký tự */
     s_lines[LINES - 1][COLS] = 0;
