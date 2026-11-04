@@ -1,0 +1,7 @@
+build/
+*.o
+*.d
+*.elf
+*.map
+__pycache__/
+.vscode/
