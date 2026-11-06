@@ -24,7 +24,7 @@
 /* Display dùng hộp thư 1 phần tử (xQueueOverwrite / xQueuePeek) */
 
 /* ---- Giá trị mặc định khi khởi động ---- */
-#define CFG_DEFAULT_PERIOD_MS   1000
+#define CFG_DEFAULT_PERIOD_MS   5000
 #define CFG_DEFAULT_T_LO_C100   1000    /* 10.00 °C */
 #define CFG_DEFAULT_T_HI_C100   3500    /* 35.00 °C */
 #define CFG_DEFAULT_H_LO_C100   3000    /* 30.00 %RH */
