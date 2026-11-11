@@ -229,19 +229,25 @@ static void page_history(void)
     }
 }
 
+/* Biểu đồ: trục dọc ghi giá trị lớn nhất/nhỏ nhất (số nguyên), trục ngang là thời gian
+ * (trái = cũ nhất, phải = hiện tại), nét chấm ngang là ngưỡng cảnh báo. */
+static int32_t floor_div100(int32_t v) { return v >= 0 ? v / 100 : -((-v + 99) / 100); }
+static int32_t ceil_div100(int32_t v)  { return -floor_div100(-v); }
+
 static void page_chart(void)
 {
-    static int16_t val[CHART_POINTS];
-    static bool    has[CHART_POINTS];
-    static const char qname[3] = { 'T', 'H', 'A' };
+    enum { N = 100, X0 = 27, TOP = 12, BOT = 54 };
+    static int16_t val[N];
+    static bool    has[N];
+    static const char *const qname[3] = { "NHIET DO (C)", "DO AM (%)", "ANH SANG (%)" };
+    static const int32_t min_span[3] = { 2, 5, 10 };   /* thang tối thiểu: không phóng to nhiễu */
     uint32_t step = s_chart_step[ui.chart_zoom];
-    int32_t lo = INT16_MAX, hi = INT16_MIN;
-    char l[48], a[12], b[12];
+    int32_t lo = INT32_MAX, hi = INT32_MIN;
+    char l[48], ts[24];
 
-    /* Điểm phải nhất là mẫu mới nhất; mỗi điểm ảnh cách nhau `step` mẫu */
-    for (int i = 0; i < CHART_POINTS; i++) {
+    for (int i = 0; i < N; i++) {
         app_sample_t s;
-        uint32_t k = (uint32_t)(CHART_POINTS - 1 - i) * step;
+        uint32_t k = (uint32_t)(N - 1 - i) * step;
         has[i] = fl_read_newest(k, &s) && !(ui.chart_qty < 2 && (s.flags & APP_FLAG_SHT_FAIL));
         if (!has[i]) continue;
         val[i] = ui.chart_qty == 0 ? s.temp_c100 :
@@ -250,40 +256,58 @@ static void page_chart(void)
         if (val[i] > hi) hi = val[i];
     }
 
-    if (lo > hi) {
-        title("BIEU DO", PG_CHART);
-        ssd1306_text(0, 28, "Chua co du lieu", 1);
-        return;
-    }
-    if (hi - lo < 100) { lo -= 50; hi += 50; }        /* đường phẳng: nới thang 1 đơn vị */
-
-    /* Tiêu đề: đại lượng, khoảng min..max, độ dài cửa sổ thời gian (theo chu kỳ hiện tại) */
+    /* Tiêu đề: tên đại lượng + độ dài khoảng thời gian đang xem */
     app_config_t c;
     app_config_get(&c);
-    uint32_t span_min = (uint32_t)((uint64_t)CHART_POINTS * step * c.period_ms / 60000u);
-    if (ui.chart_qty == 2) {                          /* ánh sáng: % nguyên */
-        snprintf(a, sizeof a, "%ld", (long)(lo / 100));
-        snprintf(b, sizeof b, "%ld%%", (long)(hi / 100));
-    } else {
-        app_fmt_c100(a, sizeof a, lo);
-        app_fmt_c100(b, sizeof b, hi);
-    }
-    if (span_min < 120) snprintf(l, sizeof l, "%c %s..%s %lum", qname[ui.chart_qty], a, b, (unsigned long)span_min);
-    else                snprintf(l, sizeof l, "%c %s..%s %luh", qname[ui.chart_qty], a, b, (unsigned long)(span_min / 60));
+    uint32_t span = (uint32_t)((uint64_t)N * step * c.period_ms / 60000u);   /* phút */
+    if (span < 120) snprintf(ts, sizeof ts, "%lu phut", (unsigned long)span);
+    else            snprintf(ts, sizeof ts, "%lu gio", (unsigned long)(span / 60));
+    snprintf(l, sizeof l, "%-13s%8s", qname[ui.chart_qty], ts);
     ssd1306_text(0, 0, l, 1);
     ssd1306_hline(9);
+    if (lo > hi) { ssd1306_text(0, 28, "Chua co du lieu", 1); return; }
 
-    /* Vẽ: nối điểm liên tiếp bằng đoạn thẳng đứng để thành đường liền */
-    const int x0 = 128 - CHART_POINTS, hgt = CHART_BOTTOM - CHART_TOP;
-    int prev_y = -1;
-    for (int i = 0; i < CHART_POINTS; i++) {
-        if (!has[i]) { prev_y = -1; continue; }
-        int y = CHART_BOTTOM - (int)((val[i] - lo) * hgt / (hi - lo));
-        int y1 = prev_y < 0 ? y : prev_y;
-        for (int yy = (y < y1 ? y : y1); yy <= (y > y1 ? y : y1); yy++) ssd1306_pixel(x0 + i, yy);
-        prev_y = y;
+    /* Thang đo: làm tròn ra số nguyên, rộng ít nhất min_span đơn vị */
+    lo = floor_div100(lo);
+    hi = ceil_div100(hi);
+    int32_t need = min_span[ui.chart_qty] - (hi - lo);
+    if (need > 0) { lo -= need / 2; hi += need - need / 2; }
+    if (ui.chart_qty > 0) {                              /* % nằm trong 0..100 */
+        if (lo < 0)   { hi -= lo; lo = 0; }
+        if (hi > 100) { lo -= hi - 100; hi = 100; }
     }
-    for (int y = CHART_TOP; y <= CHART_BOTTOM; y += 2) ssd1306_pixel(x0 - 2, y);   /* trục dọc */
+    const int32_t range = (hi - lo) * 100, h = BOT - TOP;
+
+    /* Trục dọc: nhãn max ở trên, min ở dưới */
+    snprintf(l, sizeof l, "%4ld", (long)hi); ssd1306_text(0, TOP - 1, l, 1);
+    snprintf(l, sizeof l, "%4ld", (long)lo); ssd1306_text(0, BOT - 6, l, 1);
+    for (int y = TOP; y <= BOT; y += 2) ssd1306_pixel(X0 - 2, y);
+
+    /* Ngưỡng cảnh báo (nhiệt độ, độ ẩm): nét chấm ngang */
+    if (ui.chart_qty < 2) {
+        int32_t th[2] = { ui.chart_qty == 0 ? c.t_lo_c100 : c.h_lo_c100,
+                          ui.chart_qty == 0 ? c.t_hi_c100 : c.h_hi_c100 };
+        for (int j = 0; j < 2; j++) {
+            if (th[j] < lo * 100 || th[j] > hi * 100) continue;
+            int y = BOT - (int)((th[j] - lo * 100) * h / range);
+            for (int x = X0; x < SSD1306_W; x += 4) ssd1306_pixel(x, y);
+        }
+    }
+
+    /* Đường dữ liệu: nối điểm liên tiếp bằng đoạn thẳng đứng */
+    int prev = -1;
+    for (int i = 0; i < N; i++) {
+        if (!has[i]) { prev = -1; continue; }
+        int y = BOT - (int)((val[i] - lo * 100) * h / range);
+        int a = prev < 0 ? y : prev;
+        for (int yy = (y < a ? y : a); yy <= (y > a ? y : a); yy++) ssd1306_pixel(X0 + i, yy);
+        prev = y;
+    }
+
+    /* Trục ngang: trái là quá khứ, phải là hiện tại */
+    snprintf(l, sizeof l, "-%s", ts);
+    ssd1306_text(X0, 57, l, 1);
+    ssd1306_text(SSD1306_W - 18, 57, "nay", 1);
 }
 
 static void page_system(bool flash_ok)
